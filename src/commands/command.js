@@ -15,21 +15,13 @@ function IrcCommand(command, data) {
 }
 
 
+IrcCommand.prototype.getTag = function(tag_name) {
+    return this.tags[tag_name.toLowerCase()];
+};
+
+
 IrcCommand.prototype.getServerTime = function() {
-    var time;
-
-    // No tags? No times.
-    if (!this.tags || this.tags.length === 0) {
-        return;
-    }
-
-    time = _.find(this.tags, function(tag) {
-        return tag.tag === 'time';
-    });
-
-    if (time) {
-        time = time.value;
-    }
+    var time = this.getTag('time');
 
     // Convert the time value to a unixtimestamp
     if (typeof time === 'string') {

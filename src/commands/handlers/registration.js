@@ -60,42 +60,77 @@ var handlers = {
 
     CAP: function(command) {
         var request_caps = [];
+        var capabilities = [];
+        var capability_values = Object.create(null);
 
         // TODO: capability modifiers
         // i.e. - for disable, ~ for requires ACK, = for sticky
         var capabilities = command.params[command.params.length - 1]
             .replace(/(?:^| )[\-~=]/, '')
-            .split(' ');
+            .split(' ')
+            .map(function(cap) {
+                // CAPs in 3.2 may be in the form of CAP=VAL. So seperate those out
+                var sep = cap.indexOf('=');
+                if (sep === -1) {
+                    return cap;
+                }
+
+                var cap_name = cap.substr(0, sep);
+                var cap_value = cap.substr(sep + 1);
+
+                capability_values[cap_name] = cap_value;
+                return cap_name;
+            });
 
         // Which capabilities we want to enable
         var want = [
+            'batch',
             'multi-prefix',
             'away-notify',
+            'invite-notify',
+            'account-notify',
+            'account-tag',
             'server-time',
+            'userhost-in-names',
             'extended-join',
             'znc.in/server-time-iso',
             'znc.in/server-time',
             'twitch.tv/membership'
         ];
+
+        // Optional CAPs depending on settings
+        if (this.connection.options.password) {
+            want.push('sasl');
+        }
+        if (this.connection.options.enable_chghost) {
+            want.push('chghost');
+        }
+        if (this.connection.options.enable_echomessage) {
+            want.push('echo-message');
+        }
+
         want = _(want)
             .concat(this.request_extra_caps)
             .uniq()
             .value();
-
-        if (this.connection.password) {
-            want.push('sasl');
-        }
 
         switch (command.params[1]) {
             case 'LS':
                 // Compute which of the available capabilities we want and request them
                 request_caps = _.intersection(capabilities, want);
                 if (request_caps.length > 0) {
-                    this.network.cap.requested = request_caps;
-                    this.connection.write('CAP REQ :' + request_caps.join(' '));
-                } else {
-                    this.connection.write('CAP END');
-                    this.network.cap.negotiating = false;
+                    this.network.cap.requested = this.network.cap.requested.concat(request_caps);
+                }
+
+                // CAP 3.2 multline support. Only send our CAP requests on the last CAP LS
+                // line which will not have * set for params[2]
+                if (command.params[2] !== '*') {
+                    if (request_caps.length > 0) {
+                        this.connection.write('CAP REQ :' + request_caps.join(' '));
+                    } else {
+                        this.connection.write('CAP END');
+                        this.network.cap.negotiating = false;
+                    }
                 }
                 break;
             case 'ACK':
@@ -132,14 +167,20 @@ var handlers = {
             case 'LIST':
                 // should we do anything here?
                 break;
+            case 'NEW':
+                // Not supported yet
+                break;
+            case 'DEL':
+                // Not supported yet
+                break;
         }
     },
 
 
     AUTHENTICATE: function(command) {
-        var auth_str = this.connection.nick + '\0' +
-            this.connection.nick + '\0' +
-            this.connection.password;
+        var auth_str = this.connection.options.nick + '\0' +
+            this.connection.options.nick + '\0' +
+            this.connection.options.password;
         var b = new Buffer(auth_str, 'utf8');
         var b64 = b.toString('base64');
 

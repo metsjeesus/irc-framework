@@ -95,6 +95,25 @@ The client has a raw connected socket to the network but not yet completed any T
 ~~~
 
 
+#### Raw connection and debugging
+**raw**
+
+A valid raw line sent or received from the IRC server.
+~~~javascript
+{
+    line: ':server.ircd.net 265 prawnsalad :Current Local Users: 214  Max: 411',
+    from_server: true
+}
+~~~
+
+
+**debug**
+
+Debugging messages.
+~~~javascript
+'Socket fully connected'
+~~~
+
 #### Channels
 **channel info**
 ~~~javascript
@@ -132,6 +151,15 @@ The client has a raw connected socket to the network but not yet completed any T
 ~~~
 
 
+**wholist**
+~~~javascript
+{
+    target: '#channel',
+    users: [ ... ]
+}
+~~~
+
+
 **banlist**
 ~~~javascript
 {
@@ -159,6 +187,8 @@ The client has a raw connected socket to the network but not yet completed any T
 ~~~javascript
 {
     nick: 'prawnsalad',
+    user: 'prawnsalad',
+    host: 'unaffiliated/prawnsalad',
     channel: '#channel',
     when: 000000000
 }
@@ -334,6 +364,20 @@ Also triggers a **message** event with .type = 'privmsg'
 ~~~
 
 
+**account**
+
+`account` will be `false` if the user has logged out.
+~~~javascript
+{
+    nick: 'prawnsalad',
+    ident: 'prawn',
+    hostname: 'isp.manchester.net',
+    account: 'prawns_account_name',
+    time: 000000000
+}
+~~~
+
+
 **away**
 ~~~javascript
 {
@@ -402,5 +446,54 @@ If the requested user was not found, error will contain 'no_such_nick'.
     host: 'manchester.isp.net',
     real_name: 'prawns real name',
     error: ''
+}
+~~~
+
+
+**user updated**
+
+Only on supporting IRC servers with CHGHOST capabilities and 'enable_chghost' set in the connection options.
+~~~javascript
+{
+    nick: 'prawnsalad',
+    ident: 'prawns_old_ident',
+    hostname: 'prawns.old.hostname',
+    new_user: 'prawns_new_ident',
+    new_host: 'prawns_new_host',
+    time: time
+}
+~~~
+
+
+
+#### Misc
+**batch start**
+
+On capable networks a set of commands may be batched together. The commands will be
+executed automatically directly after this event as a transaction, each with a tag
+`batch` matching this `event.id` value.
+
+A `batch start <type>` event is also triggered.
+~~~javascript
+{
+    id: 1,
+    type: 'chathistory',
+    params: [],
+    commands: []
+}
+~~~
+
+**batch end**
+
+After a `batch start` event has been triggered along with all its commands, this event
+will be triggered directly after.
+
+A `batch end <type>` event is also triggered.
+~~~javascript
+{
+    id: 1,
+    type: 'chathistory',
+    params: [],
+    commands: []
 }
 ~~~

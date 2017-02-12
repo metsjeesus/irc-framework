@@ -1,27 +1,30 @@
-var EventEmitter = require('events').EventEmitter;
-var util = require('util');
+var EventEmitter = require('eventemitter3');
 var _ = require('lodash');
 var MiddlewareHandler = require('middleware-handler');
-var MiddlewareStream = require('./middlewarestream');
 var IrcCommandHandler = require('./commands/').CommandHandler;
 var Connection = require('./connection');
 var NetworkInfo = require('./networkinfo');
 var User = require('./user');
 var Channel = require('./channel');
 
-function IrcClient() {
-    EventEmitter.call(this);
-
-    // Provides middleware hooks for either raw IRC commands or the easier to use parsed commands
-    this.raw_middleware = new MiddlewareHandler();
-    this.parsed_middleware = new MiddlewareHandler();
-
-    this.request_extra_caps = [];
-}
-
-util.inherits(IrcClient, EventEmitter);
+var default_transport = null;
 
 module.exports = IrcClient;
+
+function IrcClient(options) {
+    EventEmitter.call(this);
+
+    this.request_extra_caps = [];
+    this.options = options || null;
+
+    this.createStructure();
+}
+
+_.extend(IrcClient.prototype, EventEmitter.prototype);
+
+IrcClient.setDefaultTransport = function(transport) {
+    default_transport = transport;
+};
 
 IrcClient.prototype._applyDefaultOptions = function(user_options) {
     var defaults = {
@@ -30,11 +33,14 @@ IrcClient.prototype._applyDefaultOptions = function(user_options) {
         gecos: 'ircbot',
         encoding: 'utf8',
         version: 'node.js irc-framework',
+        enable_chghost: false,
+        enable_echomessage: false,
         auto_reconnect: true,
         auto_reconnect_wait: 4000,
         auto_reconnect_max_retries: 3,
         ping_interval: 30,
-        ping_timeout: 120
+        ping_timeout: 120,
+        transport: default_transport
     };
 
     var props = Object.keys(defaults);
@@ -45,6 +51,61 @@ IrcClient.prototype._applyDefaultOptions = function(user_options) {
     }
 
     return user_options;
+};
+
+
+IrcClient.prototype.createStructure = function() {
+    var client = this;
+
+    // Provides middleware hooks for either raw IRC commands or the easier to use parsed commands
+    client.raw_middleware = new MiddlewareHandler();
+    client.parsed_middleware = new MiddlewareHandler();
+
+    client.connection = new Connection(client.options);
+    client.network = new NetworkInfo();
+    client.user = new User();
+
+    client.command_handler = new IrcCommandHandler(client.connection, client.network);
+
+    client.addCommandHandlerListeners();
+
+    // Proxy some connection events onto this client
+    [
+        'connecting',
+        'reconnecting',
+        'close',
+        'socket close',
+        'socket error',
+        'raw socket connected',
+        'debug',
+        'raw'
+    ].forEach(function(event_name) {
+        client.connection.on(event_name, function() {
+            var args = Array.prototype.slice.call(arguments);
+            client.emit.apply(client, [event_name].concat(args));
+        });
+    });
+
+    client.connection.on('socket connected', function() {
+        client.emit('socket connected');
+        client.registerToNetwork();
+        client.startPeriodicPing();
+    });
+
+    // IRC command routing
+    client.connection.on('message', function(message, raw_line) {
+        client.raw_middleware.handle([message.command, message, raw_line, client], function(err) {
+            if (err) {
+                console.log(err.stack);
+                return;
+            }
+
+            client.command_handler.dispatch(message);
+        });
+    });
+
+    // Proxy the command handler events onto the client object, with some added sugar
+    client.proxyIrcEvents();
 };
 
 
@@ -62,58 +123,29 @@ IrcClient.prototype.use = function(middleware_fn) {
 IrcClient.prototype.connect = function(options) {
     var client = this;
 
-    this.options = options;
-    this._applyDefaultOptions(this.options);
-
-    if (this.connection && this.connection.connected) {
-        this.connection.end();
+    // Use the previous options object if we're calling .connect() again
+    if (!options && !client.options) {
+        throw new Error('Options object missing from IrcClient.connect()');
+    } else if (!options) {
+        options = client.options;
+    } else {
+        client.options = options;
     }
 
-    this.connection = new Connection(this.options);
-    this.network = new NetworkInfo();
-    this.user = new User({
-        nick: options.nick,
-        username: options.username,
-        gecos: options.gecos
-    });
+    client._applyDefaultOptions(options);
 
-    this.command_handler = new IrcCommandHandler(this.connection, this.network);
-    this.command_handler.requestExtraCaps(this.request_extra_caps);
+    if (client.connection && client.connection.connected) {
+        client.connection.end();
+    }
 
-    client.addCommandHandlerListeners();
+    client.user.nick = options.nick;
+    client.user.username = options.username;
+    client.user.gecos = options.gecos;
 
-    // Proxy some connection events onto this client
-    [
-        'reconnecting',
-        'close',
-        'socket close',
-        'socket error',
-        'raw socket connected',
-        'debug',
-        'raw'
-    ].forEach(function(event_name) {
-        client.connection.on(event_name, function() {
-            var args = Array.prototype.slice.call(arguments);
-            client.emit.apply(client, [event_name].concat(args));
-        });
-    });
-
-    this.connection.on('socket connected', function() {
-        client.emit('socket connected');
-        client.registerToNetwork();
-        client.startPeriodicPing();
-    });
-
-    // IRC command routing
-    this.connection
-        .pipe(new MiddlewareStream(this.raw_middleware, this))
-        .pipe(this.command_handler);
-
-    // Proxy the command handler events onto the client object, with some added sugar
-    this.proxyIrcEvents();
+    client.command_handler.requestExtraCaps(client.request_extra_caps);
 
     // Everything is setup and prepared, start connecting
-    this.connection.connect();
+    client.connection.connect(options);
 };
 
 
@@ -172,6 +204,12 @@ IrcClient.prototype.addCommandHandlerListeners = function() {
         client.emit('connected', event);
     });
 
+    commands.on('displayed host', function(event) {
+        if (client.user.nick === event.nick) {
+            client.user.host = event.host;
+        }
+    });
+
     // Don't let IRC ERROR command kill the node.js process if unhandled
     commands.on('error', function(event) {
     });
@@ -185,7 +223,7 @@ IrcClient.prototype.registerToNetwork = function() {
         this.raw('WEBIRC', webirc.password, webirc.username, webirc.hostname, webirc.address);
     }
 
-    this.raw('CAP LS');
+    this.raw('CAP LS 302');
 
     if (this.options.password) {
         this.raw('PASS', this.options.password);
@@ -340,23 +378,29 @@ IrcClient.prototype.part = function(channel, message) {
 
 
 IrcClient.prototype.ctcpRequest = function(target, type /*, paramN*/) {
-    var params = Array.prototype.slice.call(arguments, 2);
+    var params = Array.prototype.slice.call(arguments, 1);
+
+    // make sure the CTCP type is uppercased
+    params[0] = params[0].toUpperCase();
+
     this.raw(
         'PRIVMSG',
         target,
-        String.fromCharCode(1) + type.toUpperCase() + ' ' +
-        params.join(' ') + String.fromCharCode(1)
+        String.fromCharCode(1) + params.join(' ') + String.fromCharCode(1)
     );
 };
 
 
 IrcClient.prototype.ctcpResponse = function(target, type /*, paramN*/) {
-    var params = Array.prototype.slice.call(arguments, 2);
+    var params = Array.prototype.slice.call(arguments, 1);
+
+    // make sure the CTCP type is uppercased
+    params[0] = params[0].toUpperCase();
+
     this.raw(
         'NOTICE',
         target,
-        String.fromCharCode(1) + type.toUpperCase() + ' ' +
-        params.join(' ') + String.fromCharCode(1)
+        String.fromCharCode(1) + params.join(' ') + String.fromCharCode(1)
     );
 };
 
@@ -388,6 +432,68 @@ IrcClient.prototype.whois = function(target, cb) {
     });
 
     this.raw('WHOIS', target);
+};
+
+
+/**
+ * WHO requests are queued up to run serially.
+ * This is mostly because networks will only reply serially and it makes
+ * it easier to include the correct replies to callbacks
+ */
+IrcClient.prototype.who = function(target, cb) {
+    if (!this.who_queue) {
+        this.who_queue = [];
+    }
+    this.who_queue.push([target, cb]);
+    this.processNextWhoQueue();
+};
+
+
+IrcClient.prototype.processNextWhoQueue = function() {
+    var client = this;
+
+    // No items in the queue or the queue is already running?
+    if (client.who_queue.length === 0 || client.who_queue.is_running) {
+        return;
+    }
+
+    client.who_queue.is_running = true;
+
+    var this_who = client.who_queue.shift();
+    var target = this_who[0];
+    var cb = this_who[1];
+
+    if (!target || typeof target !== 'string') {
+        if (typeof cb === 'function') {
+            _.defer(cb, {
+                target: target,
+                users: []
+            });
+        }
+
+        // Start the next queued WHO request
+        client.who_queue.is_running = false;
+        _.defer(_.bind(client.processNextWhoQueue, client));
+
+        return;
+    }
+
+    client.on('wholist', function onWho(event) {
+        client.removeListener('wholist', onWho);
+
+        // Start the next queued WHO request
+        client.who_queue.is_running = false;
+        _.defer(_.bind(client.processNextWhoQueue, client));
+
+        if (typeof cb === 'function') {
+            cb({
+                target: target,
+                users: event.users
+            });
+        }
+    });
+
+    client.raw('WHO', target);
 };
 
 

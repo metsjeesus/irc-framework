@@ -1,15 +1,14 @@
 var _ = require('lodash');
+var EventEmitter = require('eventemitter3');
 var irc_numerics = require('./numerics');
 var IrcCommand = require('./command');
-var util = require('util');
-var stream = require('stream');
 
 
 module.exports = IrcCommandHandler;
 
 
 function IrcCommandHandler(connection, network_info) {
-    stream.Writable.call(this, { objectMode: true });
+    EventEmitter.call(this);
 
     // Adds an 'all' event to .emit()
     this.addAllEventName();
@@ -28,16 +27,30 @@ function IrcCommandHandler(connection, network_info) {
     require('./handlers/generics')(this);
 }
 
-util.inherits(IrcCommandHandler, stream.Writable);
+_.extend(IrcCommandHandler.prototype, EventEmitter.prototype);
 
 
-IrcCommandHandler.prototype._write = function(chunk, encoding, callback) {
-    this.dispatch(new IrcCommand(chunk.command.toUpperCase(), chunk));
-    callback();
+IrcCommandHandler.prototype.dispatch = function(message) {
+    var irc_command = new IrcCommand(message.command.toUpperCase(), message);
+
+    // Batched commands will be collected and executed as a transaction
+    var batch_id = irc_command.getTag('batch');
+    if (batch_id) {
+        var cache = this.cache('batch.' + batch_id);
+        if (cache) {
+            cache.commands.push(irc_command);
+        } else {
+            // If we don't have this batch ID in cache, it either means that the
+            // server hasn't sent the starting batch command or that the server
+            // has already sent the end batch command.
+        }
+
+    } else {
+        this.executeCommand(irc_command);
+    }
 };
 
-
-IrcCommandHandler.prototype.dispatch = function(irc_command) {
+IrcCommandHandler.prototype.executeCommand = function(irc_command) {
     var command_name = irc_command.command;
 
     // Check if we have a numeric->command name- mapping for this command
@@ -54,7 +67,10 @@ IrcCommandHandler.prototype.dispatch = function(irc_command) {
 
 
 IrcCommandHandler.prototype.requestExtraCaps = function(cap) {
-    this.request_extra_caps = this.request_extra_caps.concat(cap);
+    this.request_extra_caps = _(this.request_extra_caps)
+        .concat(cap)
+        .unique()
+        .value();
 };
 
 

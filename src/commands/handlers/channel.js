@@ -1,4 +1,5 @@
 var _ = require('lodash');
+var Helpers = require('../../helpers');
 
 var handlers = {
     RPL_CHANNELMODEIS: function(command) {
@@ -44,6 +45,7 @@ var handlers = {
         _.each(members, function(member) {
             var j = 0;
             var modes = [];
+            var user = null;
 
             // If we have prefixes, strip them from the nick and keep them separate
             if (that.network.options.PREFIX) {
@@ -55,7 +57,15 @@ var handlers = {
                 }
             }
 
-            cache.members.push({nick: member, modes: modes});
+            // We may have a full user mask if the userhost-in-names CAP is enabled
+            user = Helpers.parseMask(member);
+
+            cache.members.push({
+                nick: user.nick,
+                ident: user.user,
+                hostname: user.host,
+                modes: modes
+            });
         });
     },
 
@@ -64,7 +74,7 @@ var handlers = {
         var cache = this.cache('names.' + command.params[1]);
         this.emit('userlist', {
             channel: command.params[1],
-            users: cache.members
+            users: cache.members || []
         });
         cache.destroy();
     },
@@ -113,8 +123,11 @@ var handlers = {
 
 
     RPL_TOPICWHOTIME: function(command) {
+        var parsed = Helpers.parseMask(command.params[2]);
         this.emit('topicsetby', {
-            nick: command.params[2],
+            nick: parsed.nick,
+            user: parsed.user,
+            host: parsed.host,
             channel: command.params[1],
             when: command.params[3]
         });
@@ -148,19 +161,13 @@ var handlers = {
 
     PART: function(command) {
         var time = command.getServerTime();
-        var channel = command.params[0];
-        var message;
-
-        if (command.params.length > 1) {
-            message = command.params[command.params.length - 1];
-        }
 
         this.emit('part', {
             nick: command.nick,
             ident: command.ident,
             hostname: command.hostname,
-            channel: channel,
-            message: message,
+            channel: command.params[0],
+            message: command.params[command.params.length - 1] || '',
             time: time
         });
     },
@@ -175,7 +182,7 @@ var handlers = {
             ident: command.ident,
             hostname: command.hostname,
             channel: command.params[0],
-            message: command.params[command.params.length - 1],
+            message: command.params[command.params.length - 1] || '',
             time: time
         });
     },
@@ -188,7 +195,7 @@ var handlers = {
             nick: command.nick,
             ident: command.ident,
             hostname: command.hostname,
-            message: command.params[command.params.length - 1],
+            message: command.params[command.params.length - 1] || '',
             time: time
         });
     },
