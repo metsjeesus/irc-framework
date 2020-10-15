@@ -5,6 +5,8 @@ const _ = {
 };
 const EventEmitter = require('eventemitter3');
 const ircLineParser = require('./irclineparser');
+var iconv           = require('iconv-lite');
+var isValidUTF8     = require('utf-8-validate');
 
 module.exports = class Connection extends EventEmitter {
     constructor(options) {
@@ -21,6 +23,9 @@ module.exports = class Connection extends EventEmitter {
         this.registered = false;
 
         this.transport = null;
+
+        this.encoding = 'utf8';
+        this.encoding_fallback = '';
 
         this._timers = [];
     }
@@ -55,6 +60,15 @@ module.exports = class Connection extends EventEmitter {
         if (!options.encoding || !this.setEncoding(options.encoding)) {
             this.setEncoding('utf8');
         }
+
+        if (!options.encoding_fallback || !this.setEncodingFallback(options.encoding_fallback)) {
+            this.setEncodingFallback('');
+        }
+
+        // Some transports may emit extra events
+        this.transport.on('extra', function(/*event_name, argN*/) {
+            that.emit.apply(that, arguments);
+        });
 
         bindTransportEvents(this.transport);
 
@@ -248,8 +262,113 @@ module.exports = class Connection extends EventEmitter {
     setEncoding(encoding) {
         this.debugOut('Connection.setEncoding() encoding=' + encoding);
 
-        if (this.transport) {
-            return this.transport.setEncoding(encoding);
+        if (this.testEncoding(encoding)) {
+            this.encoding = encoding;
+
+            if (this.transport) {
+                this.transport.setEncoding(encoding);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    setEncodingFallback(encoding) {
+        this.debugOut('Connection.setEncodingFallback() encoding=' + encoding);
+
+        if (!encoding) {
+            this.encoding_fallback = '';
+            return true;
+        } else if (this.testEncoding(encoding)) {
+            this.encoding_fallback = encoding;
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    testEncoding(encoding) {
+        try {
+            const encoded_test = iconv.encode('TEST', encoding);
+            // This test is done to check if this encoding also supports
+            // the ASCII charset required by the IRC protocols
+            // (Avoid the use of base64 or incompatible encodings)
+            if (encoded_test == 'TEST') { // jshint ignore:line
+                return true;
+            }
+            return false;
+        } catch (err) {
+            return false;
+        }
+    }
+
+    /**
+     * Process the buffered messages recieved from the IRCd
+     * Will only process 4 lines per JS tick so that node can handle any other events while
+     * handling a large buffer
+     */
+    processReadBuffer(continue_processing) {
+        // If we already have the read buffer being iterated through, don't start
+        // another one.
+        if (this.reading_buffer && !continue_processing) {
+            return;
+        }
+
+        var that = this;
+        var lines_per_js_tick = 40;
+        var processed_lines = 0;
+        var line;
+        var message;
+
+        this.reading_buffer = true;
+
+        while (processed_lines < lines_per_js_tick && this.read_buffer.length > 0) {
+            line = this.read_buffer.shift();
+            if (!line) {
+                continue;
+            }
+
+            message = this.parseLine(line);
+
+            if (!message) {
+                // A malformed IRC line
+                continue;
+            }
+            this.emit('raw', { line: line, from_server: true });
+            this.emit('message', message, line);
+
+            processed_lines++;
+        }
+
+        // If we still have items left in our buffer then continue reading them in a few ticks
+        if (this.read_buffer.length > 0) {
+            this.setTimeout(function() {
+                that.processReadBuffer(true);
+            }, 1);
+        } else {
+            this.reading_buffer = false;
+        }
+    }
+
+    parseLine(line) {
+        if (typeof line === 'string') {
+            return ircLineParser(line);
+        } else {
+            const line_bytes = line;
+            line = iconv.decode(line_bytes, this.encoding);
+            var message = ircLineParser(line);
+
+            // If fallback is necessary, fill the params with re-decoded message
+            if (this.encoding === 'utf8' && this.encoding_fallback && !isValidUTF8(line_bytes)) {
+                const line_fallback = iconv.decode(line_bytes, this.encoding_fallback);
+                const message_fallback = ircLineParser(line_fallback);
+
+                if (message.params.length == message_fallback.params.length) {
+                    message.params = message_fallback.params;
+                }
+            }
+
+            return message;
         }
     }
 };

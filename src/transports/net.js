@@ -26,6 +26,7 @@ module.exports = class Connection extends EventEmitter {
         this.socket_events = [];
 
         this.encoding = 'utf8';
+        this.incoming_buffer = Buffer.from('');
     }
 
     isConnected() {
@@ -252,10 +253,15 @@ module.exports = class Connection extends EventEmitter {
                 this.encoding = encoding;
                 return true;
             }
-            return false;
-        } catch (err) {
-            return false;
         }
+
+        if (startIndex < data.length) {
+            this.incoming_buffer = data.slice(startIndex);
+        } else {
+            this.incoming_buffer = Buffer.from('');
+        }
+
+        return out;
     }
 
     getAddressFamily(addr) {
