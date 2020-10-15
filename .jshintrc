@@ -1,9 +1,0 @@
-{
-    "node": true,
-    "curly": true,
-    "eqeqeq": true,
-    "latedef": "nofunc",
-    "noarg": true,
-    "undef": true,
-    "unused": true
-}

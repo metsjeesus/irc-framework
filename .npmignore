@@ -1,8 +1,11 @@
 /coverage/
+/docs/
+/examples/
 /node_modules/
-/dist/
+/test/
 /*.sublime-project
 /*.sublime-workspace
 /irc-framework-*.tgz
-/.nyc_output/
-/yarn-error.log
+/babel.config.js
+/webpack.config.js
+/.*

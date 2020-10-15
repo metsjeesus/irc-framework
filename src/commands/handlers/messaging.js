@@ -1,44 +1,40 @@
-var _ = require('lodash');
-var util = require('util');
+'use strict';
 
-var handlers = {
-    NOTICE: function(command) {
-        var time = command.getServerTime();
-        var message = command.params[command.params.length - 1];
-        var target = command.params[0];
-        var target_group;
-        var notice_from_server = false;
+const _ = {
+    each: require('lodash/each'),
+    find: require('lodash/find'),
+};
+const util = require('util');
 
-        if ((message.charAt(0) === '\01') && (message.charAt(message.length - 1) === '\01')) {
+const handlers = {
+    NOTICE: function(command, handler) {
+        const time = command.getServerTime();
+        const message = command.params[command.params.length - 1];
+        let target = command.params[0];
+        let target_group;
+
+        if ((message.charAt(0) === '\x01') && (message.charAt(message.length - 1) === '\x01')) {
             // It's a CTCP response
-            this.emit('ctcp response', {
+            handler.emit('ctcp response', {
                 nick: command.nick,
                 ident: command.ident,
                 hostname: command.hostname,
                 target: target,
                 type: (message.substring(1, message.length - 1).split(' ') || [null])[0],
                 message: message.substring(1, message.length - 1),
-                time: time
+                time: time,
+                tags: command.tags
             });
         } else {
-            // Support '@#channel' formats
-            _.find(this.network.options.PREFIX, function(prefix) {
-                if (prefix.symbol === target[0]) {
-                    target_group = target[0];
-                    target = target.substring(1);
-                }
+            const parsed_target = handler.network.extractTargetGroup(target);
+            if (parsed_target) {
+                target = parsed_target.target;
+                target_group = parsed_target.target_group;
+            }
 
-                return true;
-            });
-
-            notice_from_server = (
-                command.prefix === this.network.server ||
-                !this.connection.registered
-            );
-
-            this.emit('notice', {
-                from_server: notice_from_server,
-                nick: command.nick || undefined,
+            handler.emit('notice', {
+                from_server: !command.nick,
+                nick: command.nick,
                 ident: command.ident,
                 hostname: command.hostname,
                 target: target,
@@ -51,28 +47,24 @@ var handlers = {
         }
     },
 
+    PRIVMSG: function(command, handler) {
+        const time = command.getServerTime();
+        const message = command.params[command.params.length - 1];
+        let target = command.params[0];
+        let target_group;
 
-    PRIVMSG: function(command) {
-        var time = command.getServerTime();
-        var message = command.params[command.params.length - 1];
-        var target = command.params[0];
-        var target_group;
+        const parsed_target = handler.network.extractTargetGroup(target);
+        if (parsed_target) {
+            target = parsed_target.target;
+            target_group = parsed_target.target_group;
+        }
 
-        // Support '@#channel' formats
-        _.find(this.network.options.PREFIX, function(prefix) {
-            if (prefix.symbol === target[0]) {
-                target_group = target[0];
-                target = target.substring(1);
-            }
-
-            return true;
-        });
-
-        if ((message.charAt(0) === '\01') && (message.charAt(message.length - 1) === '\01')) {
+        if ((message.charAt(0) === '\x01') && (message.charAt(message.length - 1) === '\x01')) {
             // CTCP request
-            if (message.substr(1, 6) === 'ACTION') {
-
-                this.emit('action', {
+            const ctcp_command = message.slice(1, -1).split(' ')[0].toUpperCase();
+            if (ctcp_command === 'ACTION') {
+                handler.emit('action', {
+                    from_server: !command.nick,
                     nick: command.nick,
                     ident: command.ident,
                     hostname: command.hostname,
@@ -83,35 +75,30 @@ var handlers = {
                     time: time,
                     account: command.getTag('account')
                 });
-
-            } else if (message.substr(1, 7) === 'VERSION') {
-                this.connection.write(util.format(
-                    'NOTICE %s :\01VERSION %s\01',
+            } else if (ctcp_command === 'VERSION' && handler.connection.options.version) {
+                handler.connection.write(util.format(
+                    'NOTICE %s :\x01VERSION %s\x01',
                     command.nick,
-                    this.connection.options.version
+                    handler.connection.options.version
                 ));
-
-            } else if (message.substr(1, 10) === 'CLIENTINFO') {
-                this.connection.write(util.format(
-                    'NOTICE %s :\01CLIENTINFO VERSION\01',
-                    command.nick
-                ));
-
             } else {
-                this.emit('ctcp request', {
+                handler.emit('ctcp request', {
+                    from_server: !command.nick,
                     nick: command.nick,
                     ident: command.ident,
                     hostname: command.hostname,
                     target: target,
                     group: target_group,
-                    type: (message.substring(1, message.length - 1).split(' ') || [null])[0],
+                    type: ctcp_command || null,
                     message: message.substring(1, message.length - 1),
                     time: time,
-                    account: command.getTag('account')
+                    account: command.getTag('account'),
+                    tags: command.tags
                 });
             }
         } else {
-            this.emit('privmsg', {
+            handler.emit('privmsg', {
+                from_server: !command.nick,
                 nick: command.nick,
                 ident: command.ident,
                 hostname: command.hostname,
@@ -124,16 +111,29 @@ var handlers = {
             });
         }
     },
+    TAGMSG: function(command, handler) {
+        const time = command.getServerTime();
+        const target = command.params[0];
+        handler.emit('tagmsg', {
+            from_server: !command.nick,
+            nick: command.nick,
+            ident: command.ident,
+            hostname: command.hostname,
+            target: target,
+            tags: command.tags,
+            time: time
+        });
+    },
 
-
-    RPL_WALLOPS: function(command) {
-        this.emit('wallops', {
+    RPL_WALLOPS: function(command, handler) {
+        handler.emit('wallops', {
             from_server: false,
             nick: command.nick,
             ident: command.ident,
             hostname: command.hostname,
             message: command.params[command.params.length - 1],
-            account: command.getTag('account')
+            account: command.getTag('account'),
+            tags: command.tags
         });
     }
 };

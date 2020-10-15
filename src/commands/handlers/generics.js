@@ -1,3 +1,5 @@
+'use strict';
+
 /*
 
 Generic IRC events. Simply passing selected IRC params into javascript objects
@@ -9,7 +11,7 @@ Example
     },
 */
 
-var generics = {
+const generics = {
     ERROR: {
         event: 'irc error',
         error: 'irc',
@@ -24,7 +26,7 @@ var generics = {
     ERR_LINKCHANNEL: {
         event: 'channel_redirect',
         from: 1,
-        to: 1
+        to: 2
     },
 
     ERR_NOSUCHNICK: {
@@ -90,7 +92,6 @@ var generics = {
         channel: 1,
         reason: -1
     },
-
     ERR_BADCHANNELKEY: {
         event: 'irc error',
         error: 'bad_channel_key',
@@ -103,21 +104,34 @@ var generics = {
         error: 'chanop_privs_needed',
         channel: 1,
         reason: -1
-    }
+    },
+
+    ERR_UNKNOWNCOMMAND: {
+        event: 'irc error',
+        error: 'unknown_command',
+        command: 1,
+        reason: -1
+    },
+
+    ERR_YOUREBANNEDCREEP: {
+        event: 'irc error',
+        error: 'banned_from_network',
+        reason: -1,
+    },
 };
 
-var generic_keys = Object.keys(generics);
+const generic_keys = Object.keys(generics);
 
 module.exports = function AddCommandHandlers(command_controller) {
     generic_keys.forEach(function(generic_command) {
-        var generic = generics[generic_command];
+        const generic = generics[generic_command];
 
-        command_controller.addHandler(generic_command, function(command) {
-            var event_obj = {};
-            var event_keys = Object.keys(generic);
-            var val;
+        command_controller.addHandler(generic_command, function(command, handler) {
+            const event_obj = {};
+            const event_keys = Object.keys(generic);
+            let val;
 
-            for (var i = 0; i < event_keys.length; i++) {
+            for (let i = 0; i < event_keys.length; i++) {
                 if (event_keys[i] === 'event') {
                     continue;
                 }
@@ -132,7 +146,17 @@ module.exports = function AddCommandHandlers(command_controller) {
                 }
             }
 
-            this.emit(generic.event, event_obj);
+            if (event_obj.channel) {
+                // Extract the group from any errors targetted towards channels with a statusmsg prefix
+                // Eg. @#channel
+                const parsed = handler.network.extractTargetGroup(event_obj.channel);
+                if (parsed) {
+                    event_obj.channel = parsed.target;
+                    event_obj.target_group = parsed.target_group;
+                }
+            }
+
+            handler.emit(generic.event, event_obj);
         });
     });
 };

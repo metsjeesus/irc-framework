@@ -124,6 +124,38 @@ Debugging messages.
 ~~~
 
 
+**channel list start**
+~~~javascript
+{ }
+~~~
+
+
+**channel list**
+~~~javascript
+[
+    {
+        channel: '#channel1',
+        num_users: 123,
+        topic: 'My topic',
+        tags: {},
+    },
+    {
+        channel: '#channel2',
+        num_users: 456,
+        topic: 'My topic',
+        tags: {},
+    },
+    ...
+]
+~~~
+
+
+**channel list end**
+~~~javascript
+{ }
+~~~
+
+
 **channel info**
 ~~~javascript
 {
@@ -187,8 +219,8 @@ Debugging messages.
 ~~~javascript
 {
     nick: 'prawnsalad',
-    user: 'prawnsalad',
-    host: 'unaffiliated/prawnsalad',
+    ident: 'prawnsalad',
+    hostname: 'unaffiliated/prawnsalad',
     channel: '#channel',
     when: 000000000
 }
@@ -263,7 +295,7 @@ The account name will only be available on supported networks.
 #### Messaging
 **notice**
 
-Also triggers a **message** event with .type = 'notice'. from_server indicates is this notice was
+Also triggers a **message** event with .type = 'notice'. from_server indicates if this notice was
 sent from the server or a user.
 ~~~javascript
 {
@@ -311,6 +343,20 @@ Also triggers a **message** event with .type = 'privmsg'
 }
 ~~~
 
+**tagmsg**
+
+~~~javascript
+{
+    nick: 'prawnsalad',
+    ident: 'prawn',
+    hostname: 'manchester.isp.net',
+    target: '#channel',
+    tags: {
+        example: 'hello'
+    },
+    time: 000000000
+}
+~~~
 
 **ctcp response**
 ~~~javascript
@@ -326,6 +372,9 @@ Also triggers a **message** event with .type = 'privmsg'
 
 
 **ctcp request**
+
+The `VERSION` CTCP is handled internally and will not trigger this event, unless you set the
+`version` option to `null`
 ~~~javascript
 {
     nick: 'prawnsalad',
@@ -379,14 +428,29 @@ Also triggers a **message** event with .type = 'privmsg'
 
 
 **away**
+
+`self` will be `true` if this is a response to your `away` command.
 ~~~javascript
 {
+    self: false,
     nick: 'prawnsalad',
     message: 'Time to go eat some food.',
     time: 000000000
 }
 ~~~
 
+
+**back**
+
+`self` will be `true` if this is a response to your `away` command.
+~~~javascript
+{
+    self: false,
+    nick: 'prawnsalad',
+    message: 'You are now back',
+    time: 000000000
+}
+~~~
 
 
 **nick in use**
@@ -407,31 +471,40 @@ Also triggers a **message** event with .type = 'privmsg'
 ~~~
 
 
+**users online**
+~~~javascript
+{
+    nicks: ['nick1', 'nick2', 'nick3'],
+}
+~~~
+
+
 
 **whois**
 
 Not all of these options will be available. Some will be missing depending on the network.
 ~~~javascript
 {
-	away: 'away message',
-	nick: 'prawnsalad',
-	user: 'prawn',
-	host: 'manchester.isp.net',
-	actuallhost: 'sometimes set when using webirc',
+    away: 'away message',
+    nick: 'prawnsalad',
+    ident: 'prawn',
+    hostname: 'manchester.isp.net',
+    actual_ip: 'sometimes set when using webirc, could be the same as actual_hostname',
+    actual_hostname: 'sometimes set when using webirc',
     real_name: 'A real prawn',
-	helpop: 'is available for help',
-	bot: 'is a bot',
-	server: 'irc.server.net',
-	server_info: '',
-	operator: 'is an operator',
-	channels: 'is on these channels',
-	modes: '',
-	idle: 'idle for 34 secs',
-	logon: 'logged on at X',
-	registered_nick: 'prawnsalad',
-	account: 'logged on account',
-	secure: 'is using SSL/TLS',
-	special: ''
+    helpop: 'is available for help',
+    bot: 'is a bot',
+    server: 'irc.server.net',
+    server_info: '',
+    operator: 'is an operator',
+    channels: 'is on these channels',
+    modes: '',
+    idle: 'idle for 34 secs',
+    logon: 'logged on at X',
+    registered_nick: 'prawnsalad',
+    account: 'logged on account',
+    secure: 'is using SSL/TLS',
+    special: ''
 }
 ~~~
 
@@ -443,8 +516,13 @@ If the requested user was not found, error will contain 'no_such_nick'.
 {
     nick: 'prawnsalad',
     ident: 'prawn',
-    host: 'manchester.isp.net',
-    real_name: 'prawns real name',
+    hostname: 'manchester.isp.net',
+    actual_ip: 'sometimes set when using webirc, could be the same as actual_hostname',
+    actual_hostname: 'sometimes set when using webirc',
+    real_name: 'A real prawn',
+    server: 'irc.server.net',
+    server_info: 'Thu Jun 14 09:15:51 2018',
+    account: 'logged on account',
     error: ''
 }
 ~~~
@@ -458,8 +536,8 @@ Only on supporting IRC servers with CHGHOST capabilities and 'enable_chghost' se
     nick: 'prawnsalad',
     ident: 'prawns_old_ident',
     hostname: 'prawns.old.hostname',
-    new_user: 'prawns_new_ident',
-    new_host: 'prawns_new_host',
+    new_ident: 'prawns_new_ident',
+    new_hostname: 'prawns_new_host',
     time: time
 }
 ~~~
@@ -467,6 +545,30 @@ Only on supporting IRC servers with CHGHOST capabilities and 'enable_chghost' se
 
 
 #### Misc
+**motd**
+~~~javascript
+{
+    motd: 'combined motd text which will contain newlines',
+    tags: {},
+}
+~~~
+
+**info**
+~~~javascript
+{
+    info: 'combined info text which will contain newlines (RPL_INFO)',
+    tags: {},
+}
+~~~
+
+**help**
+~~~javascript
+{
+    help: 'combined help text which will contain newlines (RPL_HELPTXT)',
+    tags: {},
+}
+~~~
+
 **batch start**
 
 On capable networks a set of commands may be batched together. The commands will be
@@ -495,5 +597,19 @@ A `batch end <type>` event is also triggered.
     type: 'chathistory',
     params: [],
     commands: []
+}
+~~~
+
+
+**cap ls**, **cap ack**, **cap nak**, **cap list**, **cap new**, **cap del**
+
+Triggered for each `CAP` command, lists the sent capabilities list.
+
+~~~javascript
+{
+    command: 'LS',
+    capabilities: {
+        'sts': 'port=6697'
+    }
 }
 ~~~

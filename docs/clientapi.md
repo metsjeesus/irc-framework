@@ -1,6 +1,6 @@
 ### irc-framework Client instance API
 
-Inherits EventEmitter (https://nodejs.org/api/events.html)
+Inherits [EventEmitter](https://nodejs.org/api/events.html). Read more on the Events available [here](https://github.com/kiwiirc/irc-framework/blob/master/docs/events.md).
 
 #### Constructor
 ~~~javascript
@@ -16,7 +16,26 @@ new Irc.Client({
     auto_reconnect_wait: 4000,
     auto_reconnect_max_retries: 3,
     ping_interval: 30,
-    ping_timeout: 120
+    ping_timeout: 120,
+    account: {
+        account: 'username',
+        password: 'account_password',
+    },
+    webirc: {
+        password: '',
+        username: '*',
+        hostname: 'users.host.isp.net',
+        ip: '1.1.1.1',
+        options: {
+            secure: true,
+            'local-port': 6697,
+            'remote-port': 21726,
+        },
+    },
+    client_certificate: {
+        private_key: '-----BEGIN RSA PRIVATE KEY-----[...]',
+        certificate: '-----BEGIN CERTIFICATE-----[...]',
+    },
 });
 ~~~
 
@@ -24,6 +43,15 @@ new Irc.Client({
 #### Properties
 ##### `.connected`
 If connected to the IRC network and successfully registered
+
+##### `.user`
+Once connected to an IRC network, this object will have these properties:
+* `.nick` The current nick you are currently using
+* `.username` Your username (ident) that the network sees you as using
+* `.gecos` Your current gecos (realname)
+* `.host` On supported servers, the hostname that the networksees you as using
+* `.away` Your current away status. Empty for not away
+* `.modes` A Set() instance with your current user modes
 
 
 #### Methods
@@ -60,11 +88,17 @@ Send a message to the target.
 ##### `.notice(target, message)`
 Send a notice to the target.
 
+##### `.tagmsg(target, tags)`
+Send a tagged message without content to the target
+
 ##### `.join(channel [, key])`
 Join a channel, optionally with a key/password.
 
 ##### `.part(channel [, message])`
 Part/leave a channel with an optional parting message.
+
+##### `.setTopic(channel, newTopic)`
+Set the topic of a channel
 
 ##### `.ctcpRequest(target, type [, paramN])`
 Send a CTCP request to target with any number of parameters.
@@ -80,22 +114,22 @@ Receive information about a user on the network if they exist. Optionally calls
 `cb(event)` with the result if provided.
 
 ##### `.who(target [, cb])`
-Receive a list of users on the network that matchs the target. The target may be
+Receive a list of users on the network that matches the target. The target may be
 a channel or wildcard nick. Optionally calls `cb(event)` with the result if
 provided. Multiple calls to this function are queued up and run one at a time in
 order.
 
 ##### `.list([, paramN])`
-Request that the IRC server sends a lsit of available channels. Extra parameters
+Request that the IRC server sends a list of available channels. Extra parameters
 will be sent.
 
 ##### `.channel(channel_name)`
 Create a channel object with the following methods:
-* `say(message)
-* `notice(message)
-* `action(message)
-* `part([part_message])
-* `join([key])
+* `say(message)`
+* `notice(message)`
+* `action(message)`
+* `part([part_message])`
+* `join([key])`
 
 ##### `.match(match_regex, cb[, message_type])`
 Call `cb()` when any incoming message matches `match_regex`.

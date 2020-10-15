@@ -1,23 +1,28 @@
-var sinon = require('sinon'),
-    _ = require('lodash');
+'use strict';
+
+const sinon = require('sinon');
+const _ = require('lodash');
 
 module.exports = {
-    IrcCommandHandler: function (modules) {
-        var handlers = {};
-        modules.map(function (m) {
+    IrcCommandHandler: function(modules) {
+        const handlers = {};
+        modules.map(function(m) {
             m({
-                addHandler: function (command, handler) {
-                  handlers[command] = handler;
+                addHandler: function(command, handler) {
+                    handlers[command] = handler;
                 }
             });
         });
-        var stubs = {
+        const stubs = {
             emit: sinon.stub(),
             connection: {
                 write: sinon.stub()
-            }
+            },
+            network: {
+                addServerTimeOffset: sinon.stub()
+            },
         };
-        var handler = _.mapValues(stubs, function spyify(value) {
+        const handler = _.mapValues(stubs, function spyify(value) {
             if (_.isFunction(value)) {
                 return sinon.spy(value);
             } else if (_.isObject(value)) {
@@ -25,9 +30,7 @@ module.exports = {
             }
         });
         return {
-            handlers: _.mapValues(handlers, function(value) {
-                return value.bind(handler);
-            }),
+            handlers: handlers,
             stubs: stubs,
             spies: handler
         };

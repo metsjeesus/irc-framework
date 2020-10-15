@@ -1,278 +1,255 @@
-var EventEmitter    = require('eventemitter3');
-var _               = require('lodash');
-var ircLineParser   = require('./irclineparser');
+'use strict';
 
-function Connection(options) {
-    EventEmitter.call(this);
-
-    this.options = options || {};
-
-    this.connected = false;
-    this.requested_disconnect = false;
-
-    this.auto_reconnect = this.options.auto_reconnect || false;
-    this.auto_reconnect_wait = this.options.auto_reconnect_wait || 4000;
-    this.auto_reconnect_max_retries = this.options.auto_reconnect_max_retries || 3;
-    this.reconnect_attempts = 0;
-
-    // When an IRC connection was successfully registered.
-    this.registered = false;
-
-    this.read_buffer = [];
-    this.reading_buffer = false;
-
-    this.read_command_buffer = [];
-
-    this.transport = null;
-
-    this._timers = [];
-}
-
-_.extend(Connection.prototype, EventEmitter.prototype);
-
-module.exports = Connection;
-
-Connection.prototype.debugOut = function(out) {
-    this.emit('debug', out);
+const _ = {
+    pull: require('lodash/pull'),
 };
+const EventEmitter = require('eventemitter3');
+const ircLineParser = require('./irclineparser');
 
-Connection.prototype.registeredSuccessfully = function() {
-    this.registered = Date.now();
-};
+module.exports = class Connection extends EventEmitter {
+    constructor(options) {
+        super();
 
-Connection.prototype.connect = function(options) {
-    var that = this;
-    var transport;
+        this.options = options || {};
 
-    if (options) {
-        this.options = options;
-    }
-    options = this.options;
+        this.connected = false;
+        this.requested_disconnect = false;
 
-    if (this.transport) {
-        unbindTransportEvents(this.transport);
-    }
-    transport = this.transport = new options.transport(options);
+        this.reconnect_attempts = 0;
 
-    if (!options.encoding || !this.setEncoding(options.encoding)) {
-        this.setEncoding('utf8');
-    }
+        // When an IRC connection was successfully registered.
+        this.registered = false;
 
-    // Some transports may emit extra events
-    transport.on('extra', function(/*event_name, argN*/) {
-        that.emit.apply(that, arguments);
-    });
+        this.transport = null;
 
-    bindTransportEvents(transport);
-
-    this.emit('connecting');
-    transport.connect();
-
-    function bindTransportEvents(transport) {
-        transport.on('open', socketOpen);
-        transport.on('line', socketLine);
-        transport.on('close', socketClose);
-        transport.on('debug', transportDebug);
+        this._timers = [];
     }
 
-    function unbindTransportEvents(transport) {
-        transport.removeListener('open', socketOpen);
-        transport.removeListener('line', socketLine);
-        transport.removeListener('close', socketClose);
-        transport.removeListener('debug', transportDebug);
+    debugOut(out) {
+        this.emit('debug', out);
     }
 
-    function transportDebug(out) {
-        that.debugOut(out);
+    registeredSuccessfully() {
+        this.registered = Date.now();
     }
 
-    // Called when the socket is connected and ready to start sending/receiving data.
-    function socketOpen() {
-        that.debugOut('Socket fully connected');
-        that.reconnect_attempts = 0;
-        that.connected = true;
-        that.emit('socket connected');
-    }
+    connect(options) {
+        const that = this;
 
-    function socketLine(line) {
-        that.read_buffer.push(line);
-        that.processReadBuffer();
-    }
+        if (options) {
+            this.options = options;
+        }
+        options = this.options;
 
-    function socketClose(err) {
-        var was_connected = that.connected;
-        var should_reconnect = false;
-        var safely_registered = false;
-        var registered_ms_ago = Date.now() - that.registered;
+        this.auto_reconnect = options.auto_reconnect || false;
+        this.auto_reconnect_max_retries = options.auto_reconnect_max_retries || 3;
+        this.auto_reconnect_max_wait = options.auto_reconnect_max_wait || 300000;
 
-        // Some networks use aKills which kill a user after succesfully
-        // registering instead of a ban, so we must wait some time after
-        // being registered to be sure that we are connected properly.
-        safely_registered = that.registered !== false && registered_ms_ago > 5000;
+        if (this.transport) {
+            this.clearTimers();
+            this.transport.removeAllListeners();
+            this.transport.disposeSocket();
+        }
+        this.transport = new options.transport(options);
 
-        that.debugOut('Socket closed. was_connected=' + was_connected + ' safely_registered=' + safely_registered + ' requested_disconnect='+that.requested_disconnect);
-
-        that.connected = false;
-        that.clearTimers();
-
-        that.emit('socket close', err);
-
-        if (that.requested_disconnect || !that.auto_reconnect) {
-            should_reconnect = false;
-
-        // If trying to reconnect, continue with it
-        } else if (that.reconnect_attempts && that.reconnect_attempts < that.auto_reconnect_max_retries) {
-            should_reconnect = true;
-
-        // If we were originally connected OK, reconnect
-        } else if (was_connected && safely_registered) {
-            should_reconnect = true;
-
-        } else {
-            should_reconnect = false;
+        if (!options.encoding || !this.setEncoding(options.encoding)) {
+            this.setEncoding('utf8');
         }
 
-        if (should_reconnect) {
-            that.reconnect_attempts++;
-            that.emit('reconnecting', {
-                attempt: that.reconnect_attempts,
-                max_retries: that.auto_reconnect_max_retries,
-                wait: that.auto_reconnect_wait
-            });
-        } else {
-            unbindTransportEvents(that.transport);
-            that.emit('close', err ? true : false);
+        bindTransportEvents(this.transport);
+
+        this.registered = false;
+        this.requested_disconnect = false;
+        this.emit('connecting');
+        this.transport.connect();
+
+        function bindTransportEvents(transport) {
+            transport.on('open', socketOpen);
+            transport.on('line', socketLine);
+            transport.on('close', socketClose);
+            transport.on('debug', transportDebug);
+            transport.on('extra', transportExtra);
+        }
+
+        function transportDebug(out) {
+            that.debugOut(out);
+        }
+
+        function transportExtra() {
+            // Some transports may emit extra events
+            that.emit.apply(that, arguments);
+        }
+
+        // Called when the socket is connected and ready to start sending/receiving data.
+        function socketOpen() {
+            that.debugOut('Socket fully connected');
             that.reconnect_attempts = 0;
+            that.connected = true;
+            that.emit('socket connected');
         }
 
-        if (should_reconnect) {
-            that.debugOut('Scheduling reconnect');
-            that.setTimeout(function() {
-                that.connect();
-            }, that.auto_reconnect_wait);
+        function socketLine(line) {
+            that.addReadBuffer(line);
+        }
+
+        function socketClose(err) {
+            const was_connected = that.connected;
+            let should_reconnect = false;
+            let safely_registered = false;
+            const registered_ms_ago = Date.now() - that.registered;
+
+            // Some networks use aKills which kill a user after succesfully
+            // registering instead of a ban, so we must wait some time after
+            // being registered to be sure that we are connected properly.
+            safely_registered = that.registered !== false && registered_ms_ago > 5000;
+
+            that.debugOut('Socket closed. was_connected=' + was_connected + ' safely_registered=' + safely_registered + ' requested_disconnect=' + that.requested_disconnect);
+
+            that.connected = false;
+            that.clearTimers();
+
+            that.emit('socket close', err);
+
+            if (that.requested_disconnect || !that.auto_reconnect) {
+                should_reconnect = false;
+
+            // If trying to reconnect, continue with it
+            } else if (that.reconnect_attempts && that.reconnect_attempts < that.auto_reconnect_max_retries) {
+                should_reconnect = true;
+
+            // If we were originally connected OK, reconnect
+            } else if (was_connected && safely_registered) {
+                should_reconnect = true;
+            } else {
+                should_reconnect = false;
+            }
+
+            if (should_reconnect) {
+                const reconnect_wait = that.calculateExponentialBackoff();
+
+                that.reconnect_attempts++;
+                that.emit('reconnecting', {
+                    attempt: that.reconnect_attempts,
+                    max_retries: that.auto_reconnect_max_retries,
+                    wait: reconnect_wait
+                });
+
+                that.debugOut('Scheduling reconnect. Attempt: ' + that.reconnect_attempts + '/' + that.auto_reconnect_max_retries + ' Wait: ' + reconnect_wait + 'ms');
+                that.setTimeout(() => that.connect(), reconnect_wait);
+            } else {
+                that.transport.removeAllListeners();
+                that.emit('close', !!err);
+                that.reconnect_attempts = 0;
+            }
         }
     }
-};
 
-Connection.prototype.write = function(data, callback) {
-    if (!this.connected || this.requested_disconnect) {
-        return 0;
+    calculateExponentialBackoff() {
+        const jitter = 1000 + Math.floor(Math.random() * 5000);
+        const attempts = Math.min(this.reconnect_attempts, 30);
+        const time = 1000 * Math.pow(2, attempts);
+        return Math.min(time, this.auto_reconnect_max_wait) + jitter;
     }
 
-    this.emit('raw', { line: data, from_server: false });
-    return this.transport.writeLine(data, callback);
-};
-
-
-/**
- * Create and keep track of all timers so they can be easily removed
- */
-Connection.prototype.setTimeout = function(/*fn, length, argN */) {
-    var that = this;
-    var tmr = null;
-    var callback = arguments[0];
-    
-    arguments[0] = function() {
-       _.pull(that._timers, tmr);
-       callback.apply(null, arguments);
-    };
-    
-    tmr = setTimeout.apply(null, arguments);
-    this._timers.push(tmr);
-    return tmr;
-};
-
-Connection.prototype.clearTimeout = function(tmr) {
-	clearTimeout(tmr);
-	_.pull(this._timers, tmr); 
-};
-
-Connection.prototype.clearTimers = function() {
-    this._timers.forEach(function(tmr) {
-        clearTimeout(tmr);
-    });
-    
-    this._timers = [];
-};
-
-/**
- * Close the connection to the IRCd after forcing one last line
- */
-Connection.prototype.end = function(data, callback) {
-    var that = this;
-
-    this.debugOut('Connection.end() connected=' + this.connected + ' with data=' + !!data);
-
-    if (this.connected && data) {
-        // Once the last bit of data has been sent, then re-run this function to close the socket
-        this.write(data, function() {
-            that.end();
-        });
-
-        return;
-    }
-
-    this.requested_disconnect = true;
-
-    if (this.transport) {
-        this.transport.close();
-    }
-};
-
-
-Connection.prototype.setEncoding = function(encoding) {
-    this.debugOut('Connection.setEncoding() encoding=' + encoding);
-
-    if (this.transport) {
-        return this.transport.setEncoding(encoding);
-    }
-};
-
-
-/**
- * Process the buffered messages recieved from the IRCd
- * Will only process 4 lines per JS tick so that node can handle any other events while
- * handling a large buffer
- */
-Connection.prototype.processReadBuffer = function(continue_processing) {
-    // If we already have the read buffer being iterated through, don't start
-    // another one.
-    if (this.reading_buffer && !continue_processing) {
-        return;
-    }
-
-    var that = this;
-    var lines_per_js_tick = 4;
-    var processed_lines = 0;
-    var line;
-    var message;
-
-    this.reading_buffer = true;
-
-    while (processed_lines < lines_per_js_tick && this.read_buffer.length > 0) {
-        line = this.read_buffer.shift();
+    addReadBuffer(line) {
         if (!line) {
-            continue;
+            // Empty line
+            return;
         }
 
-        message = ircLineParser(line);
+        this.emit('raw', { line: line, from_server: true });
 
+        const message = ircLineParser(line);
         if (!message) {
             // A malformed IRC line
-            continue;
+            return;
         }
-        this.emit('raw', { line: line, from_server: true });
-        this.emit('message', message, line);
 
-        processed_lines++;
+        this.emit('message', message, line);
     }
 
-    // If we still have items left in our buffer then continue reading them in a few ticks
-    if (this.read_buffer.length > 0) {
-        this.setTimeout(function() {
-            that.processReadBuffer(true);
-        }, 1);
-    } else {
-        this.reading_buffer = false;
+    write(data, callback) {
+        if (!this.connected || this.requested_disconnect) {
+            this.debugOut('write() called when not connected');
+
+            if (callback) {
+                setTimeout(callback, 0); // fire in next tick
+            }
+
+            return false;
+        }
+
+        this.emit('raw', { line: data, from_server: false });
+        return this.transport.writeLine(data, callback);
+    }
+
+    /**
+     * Create and keep track of all timers so they can be easily removed
+     */
+    setTimeout(/* fn, length, argN */) {
+        const that = this;
+        let tmr = null;
+        const args = Array.prototype.slice.call(arguments, 0);
+        const callback = args[0];
+
+        args[0] = function() {
+            _.pull(that._timers, tmr);
+            callback.apply(null, args);
+        };
+
+        tmr = setTimeout.apply(null, args);
+        this._timers.push(tmr);
+        return tmr;
+    }
+
+    clearTimeout(tmr) {
+        clearTimeout(tmr);
+        _.pull(this._timers, tmr);
+    }
+
+    clearTimers() {
+        this._timers.forEach(function(tmr) {
+            clearTimeout(tmr);
+        });
+
+        this._timers = [];
+    }
+
+    /**
+     * Close the connection to the IRCd after forcing one last line
+     */
+    end(data, had_error) {
+        const that = this;
+
+        this.debugOut('Connection.end() connected=' + this.connected + ' with data=' + !!data + ' had_error=' + !!had_error);
+
+        if (this.connected && data) {
+            // Once the last bit of data has been sent, then re-run this function to close the socket
+            this.write(data, function() {
+                that.end(null, had_error);
+            });
+
+            return;
+        }
+
+        // Shutdowns of the connection may be caused by errors like ping timeouts, which
+        // are not requested by the user so we leave requested_disconnect as false to make sure any
+        // reconnects happen.
+        if (!had_error) {
+            this.requested_disconnect = true;
+            this.clearTimers();
+        }
+
+        if (this.transport) {
+            this.transport.close(!!had_error);
+        }
+    }
+
+    setEncoding(encoding) {
+        this.debugOut('Connection.setEncoding() encoding=' + encoding);
+
+        if (this.transport) {
+            return this.transport.setEncoding(encoding);
+        }
     }
 };

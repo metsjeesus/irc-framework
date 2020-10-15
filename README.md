@@ -1,5 +1,5 @@
 # irc-framework
-A better IRC framework for node.js. For bots and full clients
+A better IRC framework for node.js. For bots and full clients. Read the [documentation](https://github.com/kiwiirc/irc-framework/blob/master/docs/clientapi.md).
 
 ### Aims
 * Lightweight
@@ -56,7 +56,7 @@ bot.on('registered', function() {
 	channel.join();
 	channel.say('Hi!');
 	
-	channel.updateUserList(function() {
+	channel.updateUsers(function() {
 		console.log(channel.users);
 	});
 

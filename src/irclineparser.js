@@ -1,49 +1,76 @@
+'use strict';
+
+const MessageTags = require('./messagetags');
+const IrcMessage = require('./ircmessage');
+const helpers = require('./helpers');
+
 module.exports = parseIrcLine;
-/**
- * The regex that parses a line of data from the IRCd
- * Deviates from the RFC a little to support the '/' character now used in some
- * IRCds
- */
-var parse_regex = /^(?:@([^ ]+) )?(?::((?:(?:([^\s!@]+)(?:!([^\s@]+))?)@)?(\S+)) )?((?:[a-zA-Z]+)|(?:[0-9]{3}))(?: ([^:].*?))?(?: :(.*))?$/i;
 
-function parseIrcLine(line) {
-    var msg;
-    var tags = Object.create(null);
-    var msg_obj;
+const newline_regex = /^[\r\n]+|[\r\n]+$/g;
 
-    // Parse the complete line, removing any carriage returns
-    msg = parse_regex.exec(line.replace(/^\r+|\r+$/, ''));
+function parseIrcLine(input_) {
+    const input = input_.replace(newline_regex, '');
+    let cPos = 0;
+    let inParams = false;
 
-    if (!msg) {
-        // The line was not parsed correctly, must be malformed
-        return;
-    }
+    const nextToken = () => {
+        // Fast forward to somewhere with actual data
+        while (input[cPos] === ' ' && cPos < input.length) {
+            cPos++;
+        }
 
-    // Extract any tags (msg[1])
-    if (msg[1]) {
-        msg[1].split(';').forEach(function(tag) {
-            var parts = tag.split('=');
-            tags[parts[0].toLowerCase()] = typeof parts[1] === 'undefined' ?
-                true :
-                parts[1];
-        });
-    }
+        if (cPos === input.length) {
+            // If reading the params then return null to indicate no more params available.
+            // The trailing parameter may be empty but should still be included as an empty string.
+            return inParams ? null : '';
+        }
 
-    // Nick value will be in the prefix slot if a full user mask is not used
-    msg_obj = {
-        tags:       tags,
-        prefix:     msg[2],
-        nick:       msg[3] || msg[2],
-        ident:      msg[4] || '',
-        hostname:   msg[5] || '',
-        command:    msg[6],
-        params:     msg[7] ? msg[7].split(/ +/) : []
+        let end = input.indexOf(' ', cPos);
+        if (end === -1) {
+            // No more spaces means were on the last token
+            end = input.length;
+        }
+
+        if (inParams && input[cPos] === ':' && input[cPos - 1] === ' ') {
+            // If a parameter start with : then we're in the last parameter which may incude spaces
+            cPos++;
+            end = input.length;
+        }
+
+        const token = input.substring(cPos, end);
+        cPos = end;
+
+        // Fast forward our current position so we can peek what's next via input[cPos]
+        while (input[cPos] === ' ' && cPos < input.length) {
+            cPos++;
+        }
+
+        return token;
     };
 
-    // Add the trailing param to the params list
-    if (typeof msg[8] !== 'undefined') {
-        msg_obj.params.push(msg[8].trimRight());
+    const ret = new IrcMessage();
+
+    if (input[cPos] === '@') {
+        ret.tags = MessageTags.decode(nextToken().substr(1));
     }
 
-    return msg_obj;
+    if (input[cPos] === ':') {
+        ret.prefix = nextToken().substr(1);
+        const mask = helpers.parseMask(ret.prefix);
+        ret.nick = mask.nick;
+        ret.ident = mask.user;
+        ret.hostname = mask.host;
+    }
+
+    ret.command = nextToken().toUpperCase();
+
+    inParams = true;
+
+    let token = nextToken();
+    while (token !== null) {
+        ret.params.push(token);
+        token = nextToken();
+    }
+
+    return ret;
 }
